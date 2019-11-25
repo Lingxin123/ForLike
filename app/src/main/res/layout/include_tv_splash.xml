@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/tv_splash_timer"
+    android:layout_width="@dimen/dp_90"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="@dimen/dp_30"
+    android:gravity="center"
+    android:text="跳过"
+    android:layout_gravity="end"
+    android:layout_marginEnd="@dimen/dp_30"
+    android:layout_marginRight="@dimen/dp_30"
+    android:textColor="@color/color_ffffff"
+    android:textSize="@dimen/sp_18"
+    tools:ignore="HardcodedText"
+    android:background="@drawable/shape_black"/>
