@@ -6,9 +6,13 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.database.ContentObserver;
 import android.database.Cursor;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Environment;
+import android.os.Handler;
+import android.support.v4.content.FileProvider;
 import android.text.TextUtils;
 
 import java.io.File;
@@ -25,8 +29,11 @@ class FileDownLoadManager {
 
     private DownloadManager mDownloadManager;
     private DownloadSuccess mDownloadSuccess;
+    private OnUpdateListener mOnUpdateListener;
     private DownloadReceiver mDownloadReceiver;
+    private DownloadChangeObserver mDownloadChangeObserver;
     private Context mContext;
+    private long mDownloadRequestId;
 
     /**
      * 初始化下载管理器对象
@@ -49,7 +56,50 @@ class FileDownLoadManager {
      */
     void unRegister() {
         mContext.unregisterReceiver(mDownloadReceiver);
+        mContext.getContentResolver().unregisterContentObserver(mDownloadChangeObserver);
         mDownloadReceiver = null;
+        mDownloadChangeObserver = null;
+    }
+
+    /**
+     * 注册
+     *
+     * @param loadAppName  下载apk name
+     * @param providerPath 共享文件
+     */
+    private void register(String loadAppName, String providerPath) {
+        mDownloadReceiver = new DownloadReceiver();
+        mContext.registerReceiver(mDownloadReceiver, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
+
+        mDownloadChangeObserver = new DownloadChangeObserver(new Handler());
+        //CONTENT_URI 代表需要检测的URI
+        //true 表示模糊匹配（派生也可捕获）
+        //observer 具体的Observer实现类
+        mContext.getContentResolver().registerContentObserver(getUri(loadAppName, providerPath),
+                true, mDownloadChangeObserver);
+
+    }
+
+    /**
+     * 获取uri
+     *
+     * @param loadAppName  app名称
+     * @param providerPath 共享文件 兼容Android7.0
+     * @return 返回URI
+     */
+    private Uri getUri(String loadAppName, String providerPath) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            File file = new File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                    , loadAppName + ".apk");
+            //判读版本是否在7.0以上
+            //参数1 上下文, 参数2 Provider主机地址 和配置文件中保持一致   参数3  共享的文件
+            return FileProvider.getUriForFile(mContext, providerPath, file);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return Uri.fromFile(queryDownloadApk(mDownloadRequestId));
+        } else {
+            return Uri.fromFile(new File(getDownloadUri(mDownloadRequestId).getPath()));
+        }
     }
 
     /**
@@ -81,12 +131,13 @@ class FileDownLoadManager {
     /**
      * 开启下载任务
      *
-     * @param loadUri     下载链接
-     * @param loadTitle   下载标题
-     * @param loadAppName 下载APP的名称
+     * @param loadUri      下载链接
+     * @param loadTitle    下载标题
+     * @param loadAppName  下载APP的名称
+     * @param providerPath 共享文件
      * @return 当前下载任务的队列id
      */
-    long startDownLoad(String loadUri, String loadTitle, String loadAppName) {
+    long startDownLoad(String loadUri, String loadTitle, String loadAppName, String providerPath) {
         //设置下载地址 包含下载必要信息
         DownloadManager.Request request = new DownloadManager.Request(Uri.parse(loadUri));
         //设置下载时 下载显示的文字
@@ -121,9 +172,8 @@ class FileDownLoadManager {
         //将下载请求任务加入队列中 返回当前任务的id
 
         //注册广播监听
-        mDownloadReceiver = new DownloadReceiver();
-        mContext.registerReceiver(mDownloadReceiver, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
-        return mDownloadManager.enqueue(request);
+        register(loadAppName, providerPath);
+        return mDownloadRequestId = mDownloadManager.enqueue(request);
     }
 
     /**
@@ -234,6 +284,59 @@ class FileDownLoadManager {
     }
 
     /**
+     * 下载进度观察者
+     */
+    class DownloadChangeObserver extends ContentObserver {
+
+        /**
+         * Creates a content observer.
+         *
+         * @param handler The handler to run {@link #onChange} on, or null if none.
+         */
+        DownloadChangeObserver(Handler handler) {
+            super(handler);
+        }
+
+        @Override
+        public void onChange(boolean selfChange) {
+            super.onChange(selfChange);
+            updateDownloadProgress();
+        }
+    }
+
+    /**
+     * 获取下载进度 更新页面
+     */
+    private void updateDownloadProgress() {
+        int[] bytesAndStatus = new int[]{0, 0, 0};
+        DownloadManager.Query query = new DownloadManager.Query().setFilterById(mDownloadRequestId);
+        Cursor cursor = mDownloadManager.query(query);
+        if (cursor != null) {
+            if (cursor.moveToFirst()) {
+                try {
+                    //已经下载的字节数
+                    bytesAndStatus[0] = cursor.getInt(
+                            cursor.getColumnIndexOrThrow(
+                                    DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
+                    //需要下载的总字节数
+                    bytesAndStatus[1] = cursor.getInt(
+                            cursor.getColumnIndexOrThrow(
+                                    DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
+
+                    //状态所在的列索引
+                    bytesAndStatus[2] = cursor.getInt(
+                            cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+                } finally {
+                    cursor.close();
+                }
+            }
+        }
+        if (mOnUpdateListener != null) {
+            mOnUpdateListener.update(bytesAndStatus[0], bytesAndStatus[1]);
+        }
+    }
+
+    /**
      * 下载完成接口回调
      */
     interface DownloadSuccess {
@@ -243,6 +346,23 @@ class FileDownLoadManager {
          * @param intent 携带信息
          */
         void onSuccess(Intent intent);
+    }
+
+    /**
+     * 下载进度接口
+     */
+    public interface OnUpdateListener {
+        /**
+         * 回调下载进度
+         *
+         * @param currentByte 当前下载量
+         * @param totalByte   总下载量
+         */
+        void update(int currentByte, int totalByte);
+    }
+
+    void setOnUpdateListener(OnUpdateListener onUpdateListener) {
+        this.mOnUpdateListener = onUpdateListener;
     }
 
 }

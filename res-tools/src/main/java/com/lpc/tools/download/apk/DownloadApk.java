@@ -95,19 +95,20 @@ public class DownloadApk implements FileDownLoadManager.DownloadSuccess {
             }
         }
         //若第一次下载 或者下载未满足要求 则进行重新下载
-        startDownload(mWeakReference.get(), apkUrl, title, appName);
+        startDownload(mWeakReference.get(), apkUrl, title, appName, providerPath);
     }
 
     /**
      * 开启下载任务
      *
-     * @param context 上下文
-     * @param apkUrl  apk下载链接
-     * @param appName apk名称
-     * @param title   标题
+     * @param context      上下文
+     * @param apkUrl       apk下载链接
+     * @param appName      apk名称
+     * @param title        标题
+     * @param providerPath 共享文件
      */
-    private void startDownload(Context context, String apkUrl, String title, String appName) {
-        long loadId = mDownloadManager.startDownLoad(apkUrl, title, appName);
+    private void startDownload(Context context, String apkUrl, String title, String appName, String providerPath) {
+        long loadId = mDownloadManager.startDownLoad(apkUrl, title, appName, providerPath);
         getPreferences(context).edit().putLong(DownloadManager.EXTRA_DOWNLOAD_ID, loadId).apply();
     }
 
@@ -232,6 +233,28 @@ public class DownloadApk implements FileDownLoadManager.DownloadSuccess {
     }
 
     /**
+     * 取消当前下载任务
+     */
+    public void cancel() {
+        mDownloadManager.getDownloadManager().remove(getDownloadId());
+    }
+
+    /**
+     * 对应{@link Activity 的生命周期}
+     * 处理下载进度的回调 和下载广播的注册
+     */
+    public void onResume() {
+//        mDownloadManager.register();
+    }
+
+    /**
+     * 对应{@link Activity onDestory用于解除注册 防止内存泄漏}
+     */
+    public void onDestory() {
+        mDownloadManager.unRegister();
+    }
+
+    /**
      * Android8.0权限申请回调接口
      */
     public interface AndroidOInstallPermissionListener {
@@ -261,5 +284,14 @@ public class DownloadApk implements FileDownLoadManager.DownloadSuccess {
             viewDownloadIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             mWeakReference.get().startActivity(viewDownloadIntent);
         }
+    }
+
+    /**
+     * 下载进度回调 用于界面展示现在进度
+     *
+     * @param updateProgress 进度值
+     */
+    public void setOnUpdateProgress(FileDownLoadManager.OnUpdateListener updateProgress) {
+        mDownloadManager.setOnUpdateListener(updateProgress);
     }
 }
